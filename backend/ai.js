@@ -90,8 +90,6 @@ const CATEGORY_TRIGGERS = {
 
   'Address Issue': {
     high: [
-      'address',
-      'alamat',
       'wrong address', 'incorrect address',
       'address change', 'update address',
       'change address', 'wrong location',
@@ -408,18 +406,31 @@ function generateTitle(rawText, category) {
 }
 
 // ─────────────────────────────────────────
+// HTML ESCAPE — prevents XSS from user content
+// ─────────────────────────────────────────
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+// ─────────────────────────────────────────
 // SUMMARY GENERATION — Structured Admin Briefing
 // ─────────────────────────────────────────
 function generateSummary(rawText) {
   // ── 1. EXTRACT EMAIL METADATA ──────────────────────────────────
-  const subjectMatch = rawText.match(/Subject:\s*(.+)/i);
-  const subject = subjectMatch ? subjectMatch[1].trim() : '';
+  // Cap each field at 200 chars so a missing newline never swallows the whole text
+  const subjectMatch = rawText.match(/Subject:\s*([^\n]{1,200})/i);
+  const subject = subjectMatch ? escapeHtml(subjectMatch[1].trim()) : '';
 
-  const fromMatch = rawText.match(/From:\s*(.+)/i);
-  const sender = fromMatch ? fromMatch[1].trim() : '';
+  const fromMatch = rawText.match(/From:\s*([^\n]{1,200})/i);
+  const sender = fromMatch ? escapeHtml(fromMatch[1].trim()) : '';
 
-  const dateMatch = rawText.match(/Date:\s*(.+)/i);
-  const emailDate = dateMatch ? dateMatch[1].trim() : '';
+  const dateMatch = rawText.match(/Date:\s*([^\n]{1,100})/i);
+  const emailDate = dateMatch ? escapeHtml(dateMatch[1].trim()) : '';
 
   // ── 2. CLEAN THE BODY ─────────────────────────────────────────
   const cleanBody = rawText
@@ -444,10 +455,10 @@ function generateSummary(rawText) {
   const amountRegex = /RM\s?[\d,]+(?:\.\d{1,2})?/gi;
   let am;
   while ((am = amountRegex.exec(rawText)) !== null) {
-    if (!amounts.includes(am[0])) amounts.push(am[0]);
+    if (!amounts.includes(am[0])) amounts.push(escapeHtml(am[0]));
   }
   const totalLostMatch = rawText.match(/(?:total|lost|out)\s+(?:i\s+)?(?:lost\s+)?(RM\s?[\d,]+(?:\.\d{1,2})?)/i);
-  const totalLost = totalLostMatch ? totalLostMatch[1] : null;
+  const totalLost = totalLostMatch ? escapeHtml(totalLostMatch[1]) : null;
 
   // (c) Prior contact attempts
   const contactAttempts = [];
@@ -470,7 +481,7 @@ function generateSummary(rawText) {
     const sectionText = requestingSection[1];
     const sectionItems = sectionText.match(/\d\.\s+[^\n]{15,150}/g) || [];
     sectionItems.slice(0, 3).forEach(item => {
-      demands.push(item.replace(/^\d\.\s+/, '').trim());
+      demands.push(escapeHtml(item.replace(/^\d\.\s+/, '').trim()));
     });
   }
 
@@ -480,7 +491,7 @@ function generateSummary(rawText) {
     numberedList.forEach(item => {
       const text = item.replace(/^\d\.\s+/, '').trim();
       if (!ATTACHMENT_SKIP.test(text) && DEMAND_KEYWORDS.test(text) && demands.length < 3) {
-        demands.push(text);
+        demands.push(escapeHtml(text));
       }
     });
   }
@@ -488,7 +499,7 @@ function generateSummary(rawText) {
   // Fallback: sentence-level demand patterns
   if (demands.length === 0) {
     const demandPatterns = [
-      /(?:i\s+want|i\s+need|requesting|request\b)[^.!?\n]{10,120}/gi,
+      /(?:i\s+demand|i\s+want|i\s+need|requesting|request\b)[^.!?\n]{10,120}/gi,
       /(?:refund|compensation|replacement|callback|escalat|supervisor)[^.!?\n]{5,100}/gi
     ];
     for (const dp of demandPatterns) {
@@ -496,7 +507,7 @@ function generateSummary(rawText) {
       while ((d = dp.exec(cleanBody)) !== null && demands.length < 3) {
         const clean = d[0].replace(/\s+/g, ' ').trim();
         if (clean.length > 15 && !demands.some(x => x.includes(clean.substring(0, 20)))) {
-          demands.push(clean.charAt(0).toUpperCase() + clean.slice(1));
+          demands.push(escapeHtml(clean.charAt(0).toUpperCase() + clean.slice(1)));
         }
       }
       if (demands.length >= 3) break;
@@ -531,6 +542,18 @@ function generateSummary(rawText) {
   if (emailDate) metaParts.push(`<strong>Date:</strong> ${emailDate}`);
   if (metaParts.length) {
     parts.push(`<div style="font-size:12px;color:#6B7280;margin-bottom:8px;">${metaParts.join('&emsp;&bull;&emsp;')}</div>`);
+  }
+
+  // Brief "What Happened" narrative — first 2 meaningful sentences from the body
+  const bodySentences = cleanBody
+    .split(/(?<=[.!?])\s+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 30 && !/^(from|to|date|subject|dear|hi |hello|regards|sincerely|thank)/i.test(s))
+  if (bodySentences.length > 0) {
+    const excerpt = escapeHtml(bodySentences.slice(0, 2).join(' '))
+    parts.push(
+      `<div style="margin-bottom:8px;font-size:13px;color:#374151;line-height:1.6;padding:8px 10px;background:#F9FAFB;border-left:3px solid #D1D5DB;border-radius:0 6px 6px 0;">${excerpt}</div>`
+    )
   }
 
   // Tracking / Reference numbers
@@ -665,4 +688,105 @@ async function analyzeIncident(rawText, existingIncidents = []) {
   return result
 }
 
-module.exports = { analyzeIncident }
+function isDHLRelated(rawText) {
+  const lowerText = rawText.toLowerCase()
+
+  // 1. HARD BLOCK list for known noise sources
+  // 1. HARD BLOCK list for known noise sources (Domains and Names)
+  const hardBlockDomains = [
+    'quora.com', 'adobe.com', 'shopee.com', 'lazada', 'marketing',
+    'newsletter', 'digest', 'promotions', 'noreply', 'no-reply',
+    'support@discord', 'mail@mail.adobe', 'newsletters', 'promo'
+  ]
+  if (hardBlockDomains.some(domain => lowerText.includes(domain))) {
+    return false
+  }
+
+  // 2. Check for marketing / newsletter footprints
+  const marketingKeywords = [
+    'unsubscribe', 'view online', 'click here', 'shop laptops',
+    'shop desktops', 'price match guarantee', 'interest-free',
+    'all rights reserved', 'terms and conditions', 'read more', 
+    'top stories', 'suggested for you', 'safe senders list',
+    'view web version', 'manage preferences', 'privacy policy'
+  ]
+  
+  let marketingCount = 0
+  for (const keyword of marketingKeywords) {
+    if (lowerText.includes(keyword)) marketingCount++
+  }
+  
+  // If it has ANY marketing footprints, we are much stricter
+  if (marketingCount >= 1) {
+     // If it looks like a newsletter, it must have a VERY strong DHL context
+     const hasStrongDHLContext = lowerText.includes('tracking number') || 
+                                 lowerText.includes('awb #') || 
+                                 lowerText.includes('shipment id');
+     if (!hasStrongDHLContext) return false;
+  }
+
+  // 3. CORE DHL REQUIREMENT: 
+  // A real incident MUST mention at least one of these core logistics terms
+  const coreLogisticsTerms = ['dhl', 'parcel', 'shipment', 'tracking', 'awb', 'consignment', 'delivery', 'courier', 'package']
+  if (!coreLogisticsTerms.some(term => lowerText.includes(term))) {
+    return false
+  }
+
+  // 4. Check for actual incident triggers (fallback or AI scores)
+  const scores = scoreTriggers(rawText, CATEGORY_TRIGGERS)
+  const total = Object.values(scores).reduce((sum, v) => sum + v, 0)
+  return total > 0
+}
+
+function extractCustomerName(rawText) {
+  // Try "From: Name <email>" pattern
+  const fromMatch = rawText.match(/From:\s*([^<\n]+?)(?:\s*<[^>]+>)?\s*\n/i)
+  if (fromMatch) {
+    const name = fromMatch[1].trim().replace(/['"]/g, '')
+    if (name && name.length > 1 && !name.includes('@')) return name
+  }
+
+  // Try "Name: John Smith" pattern
+  const nameMatch = rawText.match(/(?:Customer\s*Name|Name|Nama|Contact)\s*:\s*([A-Za-z][^\n,]{2,40})/i)
+  if (nameMatch) return nameMatch[1].trim()
+
+  // Try "Regards, Name" or "From, Name" at end of email
+  const regardsMatch = rawText.match(/(?:Regards|Sincerely|Thanks|Thank you|From)\s*[,.]?\s*\n\s*([A-Z][a-zA-Z\s]{2,30})\s*\n/i)
+  if (regardsMatch) return regardsMatch[1].trim()
+
+  // Try email address and use local part as name
+  const emailMatch = rawText.match(/From:\s*([a-zA-Z0-9._%+-]+)@/i)
+  if (emailMatch) {
+    return emailMatch[1].replace(/[._]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+  }
+
+  return 'Unknown'
+}
+
+function extractTags(rawText, category) {
+  const text = rawText.toLowerCase()
+  const tags = []
+
+  const categoryTagMap = {
+    'Late Delivery':      'late-delivery',
+    'Damaged Parcel':     'damaged-parcel',
+    'Address Issue':      'address-issue',
+    'System Error':       'system-error',
+    'Customer Complaint': 'customer-complaint',
+  }
+  if (category && categoryTagMap[category]) tags.push(categoryTagMap[category])
+
+  if (/tracking|waybill|parcel number|shipment/.test(text)) tags.push('tracking')
+  if (/refund|compensation|claim/.test(text)) tags.push('refund')
+  if (/urgent|asap|immediately|critical/.test(text)) tags.push('urgent')
+  if (/warehouse|hub|depot/.test(text)) tags.push('warehouse')
+  if (/customer|complaint|dissatisfied/.test(text)) tags.push('customer-service')
+  if (/wrong address|wrong house|misdelivered/.test(text)) tags.push('misdelivery')
+  if (/crushed|broken|damaged|wet/.test(text)) tags.push('damage')
+  if (/portal|system|error|500|down/.test(text)) tags.push('it-system')
+  if (/malaysia|my[0-9]/.test(text)) tags.push('malaysia')
+
+  return [...new Set(tags)].slice(0, 5).join(',')
+}
+
+module.exports = { analyzeIncident, isDHLRelated, extractCustomerName, extractTags }

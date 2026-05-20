@@ -1,16 +1,38 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../api'
 
 export default function SubmitIncident() {
   const [rawContent, setRawContent] = useState('')
   const [loading, setLoading] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
+  const [fileName, setFileName] = useState('')
+  const fileRef = useRef()
   const navigate = useNavigate()
+
+  async function handleFileUpload(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    setUploading(true)
+    setError('')
+    setFileName(file.name)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const res = await api.post('/upload-file', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      setRawContent(res.data.text)
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to read file. Try copy-pasting the content instead.')
+    }
+    setUploading(false)
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
-    if (!rawContent.trim()) return setError('Please paste an incident report.')
+    if (!rawContent.trim()) return setError('Please paste an incident report or upload a file.')
     setLoading(true)
     setError('')
     try {
@@ -23,7 +45,7 @@ export default function SubmitIncident() {
   }
 
   return (
-    <div style={styles.page}>
+    <div style={styles.page} className="submit-page">
       {/* Breadcrumb */}
       <div style={styles.breadcrumb}>
         <span style={styles.breadcrumbLink} onClick={() => navigate('/')}>Dashboard</span>
@@ -49,7 +71,7 @@ export default function SubmitIncident() {
       </header>
 
       {/* Content */}
-      <div style={styles.grid}>
+      <div style={styles.grid} className="submit-grid">
         {/* Form Card */}
         <div style={styles.card}>
           <div style={styles.cardHeader}>
@@ -64,6 +86,45 @@ export default function SubmitIncident() {
                 {error}
               </div>
             )}
+
+            {/* File Upload */}
+            <div style={{ marginBottom: '16px' }}>
+              <label style={styles.label}>UPLOAD FILE (PDF, DOCX, TXT)</label>
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept=".pdf,.docx,.txt"
+                  onChange={handleFileUpload}
+                  style={{ display: 'none' }}
+                  id="file-upload"
+                />
+                <label htmlFor="file-upload" style={{
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                  padding: '10px 18px', borderRadius: '8px', cursor: 'pointer',
+                  background: '#1a1a2e', color: '#fff', fontSize: '13px', fontWeight: 600,
+                  border: 'none', userSelect: 'none'
+                }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>upload_file</span>
+                  {uploading ? 'Reading file...' : 'Choose File'}
+                </label>
+                {fileName && (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#E8F5E9', padding: '6px 12px', borderRadius: '8px', border: '1px solid #27AE60' }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: '16px', color: '#27AE60' }}>check_circle</span>
+                    <span style={{ fontSize: '13px', color: '#1a1a1a', fontWeight: 500 }}>{fileName}</span>
+                    <span
+                      className="material-symbols-outlined"
+                      onClick={() => { setFileName(''); setRawContent(''); fileRef.current.value = '' }}
+                      style={{ fontSize: '16px', color: '#E74C3C', cursor: 'pointer', marginLeft: '4px' }}
+                      title="Remove file"
+                    >cancel</span>
+                  </span>
+                )}
+              </div>
+              <p style={{ margin: '6px 0 0', fontSize: '11px', color: '#999' }}>
+                File content will be extracted and placed in the text area below
+              </p>
+            </div>
 
             <div style={styles.fieldGroup}>
               <label style={styles.label}>INCIDENT DESCRIPTION</label>
@@ -130,6 +191,10 @@ export default function SubmitIncident() {
         @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
+        }
+        @media (max-width: 768px) {
+          .submit-grid { grid-template-columns: 1fr !important; }
+          .submit-page { padding: 16px !important; }
         }
       `}</style>
     </div>

@@ -3,15 +3,18 @@ import { useNavigate } from 'react-router-dom'
 import api from '../api'
 
 function formatIncidentId(id) {
-  const year = new Date().getFullYear()
-  const short = String(id).slice(-4)
-  return 'INC-' + year + '-' + short
+  const s = String(id)
+  if (s.length <= 7) return 'INC-' + s.padStart(6, '0')
+  return 'INC-' + s.slice(-6)
 }
 
 const STATUS_MAP = {
-  Open: { color: '#E74C3C', icon: 'warning', bg: '#FEF2F2' },
+  Draft:         { color: '#6B7280', icon: 'edit_note',     bg: '#F3F4F6' },
+  Reviewed:      { color: '#3B82F6', icon: 'rate_review',   bg: '#EFF6FF' },
+  Published:     { color: '#27AE60', icon: 'verified',      bg: '#E8F5E9' },
+  Open:          { color: '#E74C3C', icon: 'warning',       bg: '#FEF2F2' },
   'In Progress': { color: '#F39C12', icon: 'hourglass_top', bg: '#FFF8E1' },
-  Resolved: { color: '#27AE60', icon: 'check_circle', bg: '#E8F5E9' },
+  Resolved:      { color: '#27AE60', icon: 'check_circle',  bg: '#E8F5E9' },
 }
 
 const CATEGORIES = [
@@ -28,6 +31,10 @@ export default function Dashboard() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
+  const [priorityFilter, setPriorityFilter] = useState('')
+  const [tagFilter, setTagFilter] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
 
@@ -35,7 +42,13 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadData()
-  }, [search, statusFilter, categoryFilter])
+  }, [search, statusFilter, categoryFilter, priorityFilter, tagFilter, dateFrom, dateTo])
+
+  // Auto-refresh every 10 seconds so new incidents from MasterBot appear automatically
+  useEffect(() => {
+    const interval = setInterval(() => loadData(), 10000)
+    return () => clearInterval(interval)
+  }, [])
 
   async function loadData() {
     setLoading(true)
@@ -44,16 +57,44 @@ export default function Dashboard() {
       if (search) params.search = search
       if (statusFilter) params.status = statusFilter
       if (categoryFilter) params.category = categoryFilter
+      if (priorityFilter) params.priority = priorityFilter
+      if (tagFilter) params.tag = tagFilter
       const [incidentsRes, reportsRes] = await Promise.all([
         api.get('/incidents', { params }),
         api.get('/reports')
       ])
-      setIncidents(incidentsRes.data)
+
+      let data = incidentsRes.data
+      if (dateFrom || dateTo) {
+        data = data.filter(i => {
+          const d = new Date(i.created_at)
+          const yyyy = d.getFullYear()
+          const mm = String(d.getMonth() + 1).padStart(2, '0')
+          const dd = String(d.getDate()).padStart(2, '0')
+          const localDateStr = `${yyyy}-${mm}-${dd}`
+          
+          if (dateFrom && localDateStr < dateFrom) return false
+          if (dateTo && localDateStr > dateTo) return false
+          return true
+        })
+      }
+
+      setIncidents(data)
       setStats(reportsRes.data)
     } catch (e) {
       console.error(e)
     }
     setLoading(false)
+  }
+
+  function clearFilters() {
+    setSearch('')
+    setStatusFilter('')
+    setCategoryFilter('')
+    setPriorityFilter('')
+    setTagFilter('')
+    setDateFrom('')
+    setDateTo('')
   }
 
   const statCards = stats ? [
@@ -64,22 +105,30 @@ export default function Dashboard() {
   ] : []
 
   return (
-    <div style={styles.page}>
+    <div style={styles.page} className="dashboard-page">
+      <style>{`
+        @media (max-width: 768px) {
+          .dashboard-page { padding: 16px !important; }
+        }
+      `}</style>
+
       {/* Header */}
       <header style={styles.header}>
         <div>
           <h2 style={styles.title}>Dashboard</h2>
           <p style={styles.subtitle}>{today}</p>
         </div>
-        <button
-          style={styles.newBtn}
-          onClick={() => navigate('/submit')}
-          onMouseEnter={e => e.currentTarget.style.background = '#B0000E'}
-          onMouseLeave={e => e.currentTarget.style.background = '#D40511'}
-        >
-          <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>add</span>
-          New Incident
-        </button>
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          <button
+            style={styles.newBtn}
+            onClick={() => navigate('/submit')}
+            onMouseEnter={e => e.currentTarget.style.background = '#B0000E'}
+            onMouseLeave={e => e.currentTarget.style.background = '#D40511'}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>add</span>
+            New Incident
+          </button>
+        </div>
       </header>
 
       {/* Stats Grid */}
@@ -98,37 +147,82 @@ export default function Dashboard() {
       </section>
 
       {/* Filters */}
-      <section style={styles.filtersRow}>
-        <div style={styles.searchWrapper}>
-          <span className="material-symbols-outlined" style={styles.searchIcon}>search</span>
-          <input
-            type="text"
-            placeholder="Search by ID, title, or keyword..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            style={styles.searchInput}
-          />
+      <section style={{ marginBottom: '16px' }}>
+        {/* Row 1 — Search */}
+        <div style={{ display: 'flex', gap: '12px', marginBottom: '10px', flexWrap: 'wrap' }}>
+          <div style={styles.searchWrapper}>
+            <span className="material-symbols-outlined" style={styles.searchIcon}>search</span>
+            <input
+              type="text"
+              placeholder="Search by ID (e.g. 100001), title, keyword..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={styles.searchInput}
+            />
+          </div>
         </div>
-        <select
-          value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value)}
-          style={styles.filterSelect}
-        >
-          <option value="">All Status</option>
-          <option value="Open">Open</option>
-          <option value="In Progress">In Progress</option>
-          <option value="Resolved">Resolved</option>
-        </select>
-        <select
-          value={categoryFilter}
-          onChange={e => setCategoryFilter(e.target.value)}
-          style={styles.filterSelect}
-        >
-          <option value="">All Categories</option>
-          {CATEGORIES.map(cat => (
-            <option key={cat} value={cat}>{cat}</option>
-          ))}
-        </select>
+
+        {/* Row 2 — Filters */}
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={styles.filterSelect}>
+            <option value="">All Status</option>
+            <option value="Draft">Draft</option>
+            <option value="Reviewed">Reviewed</option>
+            <option value="Published">Published</option>
+            <option value="Open">Open</option>
+            <option value="In Progress">In Progress</option>
+            <option value="Resolved">Resolved</option>
+          </select>
+
+          <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} style={styles.filterSelect}>
+            <option value="">All Categories</option>
+            {CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+          </select>
+
+          <select value={priorityFilter} onChange={e => setPriorityFilter(e.target.value)} style={styles.filterSelect}>
+            <option value="">All Priority</option>
+            <option value="High">High</option>
+            <option value="Medium">Medium</option>
+            <option value="Low">Low</option>
+          </select>
+
+          <select value={tagFilter} onChange={e => setTagFilter(e.target.value)} style={styles.filterSelect}>
+            <option value="">All Tags</option>
+            <option value="late-delivery">late-delivery</option>
+            <option value="damaged-parcel">damaged-parcel</option>
+            <option value="address-issue">address-issue</option>
+            <option value="system-error">system-error</option>
+            <option value="customer-complaint">customer-complaint</option>
+            <option value="tracking">tracking</option>
+            <option value="refund">refund</option>
+            <option value="urgent">urgent</option>
+            <option value="warehouse">warehouse</option>
+            <option value="misdelivery">misdelivery</option>
+          </select>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '12px', color: '#888', whiteSpace: 'nowrap' }}>From:</span>
+            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+              style={{ ...styles.filterSelect, minWidth: '140px', padding: '8px 10px' }} />
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '12px', color: '#888', whiteSpace: 'nowrap' }}>To:</span>
+            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+              style={{ ...styles.filterSelect, minWidth: '140px', padding: '8px 10px' }} />
+          </div>
+
+          {(search || statusFilter || categoryFilter || priorityFilter || tagFilter || dateFrom || dateTo) && (
+            <button onClick={clearFilters} style={{
+              padding: '8px 14px', borderRadius: '10px', border: '1px solid #ddd',
+              background: '#fff', cursor: 'pointer', fontSize: '12px',
+              color: '#888', display: 'flex', alignItems: 'center', gap: '4px'
+            }}>
+              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>close</span>
+              Clear
+            </button>
+          )}
+        </div>
       </section>
 
       {/* Table */}
@@ -142,6 +236,7 @@ export default function Dashboard() {
             <thead>
               <tr>
                 <th style={styles.th}>ID</th>
+                <th style={styles.th}>Customer Name</th>
                 <th style={styles.th}>Title</th>
                 <th style={styles.th}>Category</th>
                 <th style={styles.th}>Priority</th>
@@ -151,7 +246,7 @@ export default function Dashboard() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={6} style={{ ...styles.td, textAlign: 'center', padding: '40px' }}>Loading...</td></tr>
+                <tr><td colSpan={7} style={{ ...styles.td, textAlign: 'center', padding: '40px' }}>Loading...</td></tr>
               ) : incidents.length === 0 ? (
                 <tr><td colSpan={6} style={{ ...styles.td, textAlign: 'center', padding: '40px', color: '#999' }}>No incidents found</td></tr>
               ) : (
@@ -167,6 +262,12 @@ export default function Dashboard() {
                     >
                       <td style={styles.td}>
                         <span style={styles.idBadge}>{formatIncidentId(inc.id)}</span>
+                      </td>
+                      <td style={{ ...styles.td, maxWidth: '140px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: '14px', color: '#aaa' }}>person</span>
+                          <span style={{ fontSize: '12px', color: '#555' }}>{inc.customer_name || 'Unknown'}</span>
+                        </div>
                       </td>
                       <td style={{ ...styles.td, fontWeight: 500, maxWidth: '300px' }}>
                         {inc.title || 'Untitled'}
@@ -206,6 +307,7 @@ export default function Dashboard() {
           </table>
         </div>
       </section>
+
     </div>
   )
 }

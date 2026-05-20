@@ -34,3 +34,18 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+
+# AI/IDE metadata
+.claude/
+
+# Student Assignment Files
+WT_Assignment_A23MJ5081_Muhammad_Azim_10.pdf
+
+# UiPath Local & Auto-generated Folders
+**/.local/
+**/.objects/
+**/.settings/
+**/.tmh/
+**/project.uiproj.local
+
+

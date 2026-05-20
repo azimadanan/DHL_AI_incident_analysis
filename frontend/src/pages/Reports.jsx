@@ -5,8 +5,39 @@ import api from '../api'
 export default function Reports() {
   const [report, setReport] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [exporting, setExporting] = useState(false)
+  const [showExportMenu, setShowExportMenu] = useState(false)
+  const [exportError, setExportError] = useState('')
   const navigate = useNavigate()
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+
+  async function exportReport(format) {
+    setExporting(true)
+    setShowExportMenu(false)
+    setExportError('')
+    try {
+      const res = await api.get(`/export/${format}`, { responseType: 'blob' })
+      const mimeTypes = {
+        xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        pdf: 'application/pdf',
+        docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      }
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: mimeTypes[format] }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `DHL_Incidents_Report.${format}`
+      a.click()
+      window.URL.revokeObjectURL(url)
+    } catch (e) {
+      const status = e.response?.status
+      if (status === 403) {
+        setExportError('Export is restricted to admin accounts only.')
+      } else {
+        setExportError('Export failed. Please try again.')
+      }
+    }
+    setExporting(false)
+  }
 
   useEffect(() => { loadReport() }, [])
 
@@ -46,15 +77,73 @@ export default function Reports() {
           <h2 style={styles.title}>Reports</h2>
           <p style={styles.subtitle}>{today}</p>
         </div>
-        <button
-          style={styles.exportBtn}
-          onMouseEnter={e => e.currentTarget.style.background = '#B0000E'}
-          onMouseLeave={e => e.currentTarget.style.background = '#D40511'}
-        >
-          <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>download</span>
-          Export Report
-        </button>
+        {/* Export Button with dropdown */}
+        <div style={{ position: 'relative' }}>
+          <button
+            style={styles.exportBtn}
+            onClick={() => setShowExportMenu(v => !v)}
+            disabled={exporting}
+            onMouseEnter={e => e.currentTarget.style.background = '#B0000E'}
+            onMouseLeave={e => e.currentTarget.style.background = '#D40511'}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>
+              {exporting ? 'sync' : 'download'}
+            </span>
+            {exporting ? 'Exporting...' : 'Export Report'}
+            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_drop_down</span>
+          </button>
+
+          {showExportMenu && (
+            <div style={{
+              position: 'absolute', top: '44px', right: 0, zIndex: 100,
+              background: '#fff', borderRadius: '12px', padding: '8px',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+              border: '1px solid #eee', minWidth: '180px'
+            }}>
+              {[
+                { format: 'xlsx', icon: 'table_chart', label: 'Excel (.xlsx)', color: '#27AE60' },
+                { format: 'pdf',  icon: 'picture_as_pdf', label: 'PDF (.pdf)', color: '#E74C3C' },
+                { format: 'docx', icon: 'description', label: 'Word (.docx)', color: '#2980B9' },
+              ].map(opt => (
+                <button
+                  key={opt.format}
+                  onClick={() => exportReport(opt.format)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '10px',
+                    width: '100%', padding: '10px 12px', borderRadius: '8px',
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    fontSize: '13px', fontWeight: 500, color: '#333',
+                    textAlign: 'left'
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#f5f5f5'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                >
+                  <span className="material-symbols-outlined" style={{ color: opt.color, fontSize: '20px' }}>
+                    {opt.icon}
+                  </span>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </header>
+
+      {/* Export error banner */}
+      {exportError && (
+        <div style={{
+          background: '#FFF3F3', border: '1px solid #F5C6CB', color: '#721C24',
+          borderRadius: '10px', padding: '12px 16px', marginBottom: '16px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          fontSize: '13px', fontWeight: 500,
+        }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span className="material-symbols-outlined" style={{ fontSize: '18px', color: '#E74C3C' }}>error</span>
+            {exportError}
+          </span>
+          <button onClick={() => setExportError('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#721C24', fontSize: '18px', lineHeight: 1 }}>×</button>
+        </div>
+      )}
 
       {/* Stats Grid */}
       <section style={styles.statsGrid}>

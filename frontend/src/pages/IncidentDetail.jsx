@@ -3,15 +3,18 @@ import { useParams, useNavigate } from 'react-router-dom'
 import api from '../api'
 
 function formatIncidentId(id) {
-  const year = new Date().getFullYear()
-  const short = String(id).slice(-4)
-  return 'INC-' + year + '-' + short
+  const s = String(id)
+  if (s.length <= 7) return 'INC-' + s.padStart(6, '0')
+  return 'INC-' + s.slice(-6)
 }
 
 const STATUS_MAP = {
-  Open: { color: '#E74C3C', icon: 'warning', bg: '#FEF2F2' },
-  'In Progress': { color: '#F39C12', icon: 'hourglass_top', bg: '#FFF8E1' },
-  Resolved: { color: '#27AE60', icon: 'check_circle', bg: '#E8F5E9' },
+  Draft:        { color: '#6B7280', icon: 'edit_note',     bg: '#F3F4F6' },
+  Reviewed:     { color: '#3B82F6', icon: 'rate_review',   bg: '#EFF6FF' },
+  Published:    { color: '#27AE60', icon: 'verified',      bg: '#E8F5E9' },
+  Open:         { color: '#E74C3C', icon: 'warning',       bg: '#FEF2F2' },
+  'In Progress':{ color: '#F39C12', icon: 'hourglass_top', bg: '#FFF8E1' },
+  Resolved:     { color: '#27AE60', icon: 'check_circle',  bg: '#E8F5E9' },
 }
 
 const PRIORITY_MAP = {
@@ -26,8 +29,14 @@ export default function IncidentDetail() {
   const [incident, setIncident] = useState(null)
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(false)
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [history, setHistory] = useState([])
 
-  useEffect(() => { loadIncident() }, [id])
+  const user = JSON.parse(localStorage.getItem('user') || '{}')
+  const isAdmin = user.role === 'admin'
+
+  useEffect(() => { loadIncident(); loadHistory() }, [id])
 
   async function loadIncident() {
     setLoading(true)
@@ -40,15 +49,42 @@ export default function IncidentDetail() {
     setLoading(false)
   }
 
+  async function loadHistory() {
+    try {
+      const res = await api.get(`/incidents/${id}/history`)
+      setHistory(res.data)
+    } catch (e) { console.error(e) }
+  }
+
   async function updateStatus(newStatus) {
     setUpdating(true)
     try {
       const res = await api.patch(`/incidents/${id}/status`, { status: newStatus })
       setIncident(res.data)
+      loadHistory()
     } catch (e) {
       console.error(e)
     }
     setUpdating(false)
+  }
+
+  function openDeleteModal() {
+    setShowDeleteModal(true)
+  }
+
+  function closeDeleteModal() {
+    setShowDeleteModal(false)
+  }
+
+  async function confirmDelete() {
+    setDeleting(true)
+    try {
+      await api.delete(`/incidents/${id}`)
+      navigate('/')
+    } catch (e) {
+      console.error(e)
+    }
+    setDeleting(false)
   }
 
   if (loading) return (
@@ -59,7 +95,7 @@ export default function IncidentDetail() {
   const sm = STATUS_MAP[incident.status] || STATUS_MAP.Open
 
   return (
-    <div style={styles.page}>
+    <div style={styles.page} className="detail-page">
       {/* Breadcrumb */}
       <div style={styles.breadcrumb}>
         <span style={styles.breadcrumbLink} onClick={() => navigate('/')}>Dashboard</span>
@@ -101,8 +137,15 @@ export default function IncidentDetail() {
         </div>
       )}
 
+      <style>{`
+        @media (max-width: 768px) {
+          .detail-grid { grid-template-columns: 1fr !important; }
+          .detail-page { padding: 16px !important; }
+        }
+      `}</style>
+
       {/* Main Grid */}
-      <div style={styles.grid}>
+      <div style={styles.grid} className="detail-grid">
         {/* Left Column */}
         <div style={styles.leftCol}>
           {/* AI Summary */}
@@ -138,6 +181,10 @@ export default function IncidentDetail() {
               <h3 style={styles.cardTitle}>Incident Details</h3>
             </div>
             <div style={styles.detailGrid}>
+              <div style={styles.detailItem}>
+                <span style={styles.detailLabel}>CUSTOMER NAME</span>
+                <span style={{ fontSize: '13px', fontWeight: 600 }}>{incident.customer_name || 'Unknown'}</span>
+              </div>
               <div style={styles.detailItem}>
                 <span style={styles.detailLabel}>CATEGORY</span>
                 <span style={styles.categoryBadge}>{incident.category || 'N/A'}</span>
@@ -175,23 +222,28 @@ export default function IncidentDetail() {
               <span className="material-symbols-outlined" style={{ color: '#F39C12', fontSize: '20px' }}>swap_horiz</span>
               <h3 style={styles.cardTitle}>Status Workflow</h3>
             </div>
+            <p style={{ fontSize: '11px', color: '#999', margin: '0 0 10px', fontWeight: 600, letterSpacing: '0.05em' }}>VERSIONING</p>
+            <div style={styles.workflowBtns}>
+              {['Draft', 'Reviewed', 'Published'].map(status => {
+                const s = STATUS_MAP[status]
+                const isActive = incident.status === status
+                return (
+                  <button key={status} onClick={() => updateStatus(status)} disabled={isActive || updating}
+                    style={{ ...styles.workflowBtn, background: isActive ? s.bg : '#fff', color: isActive ? s.color : '#888', border: `1px solid ${isActive ? s.color : 'var(--border-subtle)'}`, fontWeight: isActive ? 700 : 500 }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>{s.icon}</span>
+                    {status}
+                  </button>
+                )
+              })}
+            </div>
+            <p style={{ fontSize: '11px', color: '#999', margin: '12px 0 10px', fontWeight: 600, letterSpacing: '0.05em' }}>RESOLUTION</p>
             <div style={styles.workflowBtns}>
               {['Open', 'In Progress', 'Resolved'].map(status => {
                 const s = STATUS_MAP[status]
                 const isActive = incident.status === status
                 return (
-                  <button
-                    key={status}
-                    onClick={() => updateStatus(status)}
-                    disabled={isActive || updating}
-                    style={{
-                      ...styles.workflowBtn,
-                      background: isActive ? s.bg : '#fff',
-                      color: isActive ? s.color : '#888',
-                      border: `1px solid ${isActive ? s.color : 'var(--border-subtle)'}`,
-                      fontWeight: isActive ? 700 : 500,
-                    }}
-                  >
+                  <button key={status} onClick={() => updateStatus(status)} disabled={isActive || updating}
+                    style={{ ...styles.workflowBtn, background: isActive ? s.bg : '#fff', color: isActive ? s.color : '#888', border: `1px solid ${isActive ? s.color : 'var(--border-subtle)'}`, fontWeight: isActive ? 700 : 500 }}>
                     <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>{s.icon}</span>
                     {status}
                   </button>
@@ -199,8 +251,119 @@ export default function IncidentDetail() {
               })}
             </div>
           </div>
+
+          {/* Version History */}
+          <div style={styles.card}>
+            <div style={styles.cardHeader}>
+              <span className="material-symbols-outlined" style={{ color: '#6C63FF', fontSize: '20px' }}>history</span>
+              <h3 style={styles.cardTitle}>Version History</h3>
+            </div>
+            {history.length === 0 ? (
+              <p style={{ fontSize: '13px', color: '#999', margin: 0 }}>No status changes yet.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {history.map((h, i) => {
+                  const ns = STATUS_MAP[h.new_status] || STATUS_MAP.Open
+                  return (
+                    <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '8px', borderRadius: '8px', background: '#f9f9f9' }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: '16px', color: ns.color, marginTop: '2px' }}>{ns.icon}</span>
+                      <div style={{ flex: 1 }}>
+                        <p style={{ margin: 0, fontSize: '13px', fontWeight: 600 }}>
+                          <span style={{ color: '#999' }}>{h.old_status}</span>
+                          <span className="material-symbols-outlined" style={{ fontSize: '14px', verticalAlign: 'middle', margin: '0 4px' }}>arrow_forward</span>
+                          <span style={{ color: ns.color }}>{h.new_status}</span>
+                        </p>
+                        <p style={{ margin: '2px 0 0', fontSize: '11px', color: '#999' }}>
+                          {new Date(h.changed_at).toLocaleString()} • {h.changed_by}
+                        </p>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Delete Incident — Admin Only */}
+          {isAdmin && (
+            <div style={styles.card}>
+              <div style={styles.cardHeader}>
+                <span className="material-symbols-outlined" style={{ color: '#E74C3C', fontSize: '20px' }}>delete_forever</span>
+                <h3 style={{ ...styles.cardTitle, color: '#E74C3C' }}>Danger Zone</h3>
+              </div>
+              <p style={{ fontSize: '13px', color: '#888', marginBottom: '12px' }}>
+                Permanently delete this incident. This action cannot be undone.
+              </p>
+              <button
+                onClick={openDeleteModal}
+                style={{
+                  width: '100%', padding: '10px', borderRadius: '10px',
+                  background: '#FEF2F2', color: '#E74C3C',
+                  border: '1px solid #E74C3C', cursor: 'pointer',
+                  fontSize: '13px', fontWeight: 600,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>delete</span>
+                Delete This Incident
+              </button>
+            </div>
+          )}
+
         </div>
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.5)', zIndex: 999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '20px'
+        }}>
+          <div style={{
+            background: '#fff', borderRadius: '16px', padding: '28px',
+            width: '100%', maxWidth: '420px', boxShadow: '0 8px 32px rgba(0,0,0,0.2)'
+          }}>
+            <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+              <div style={{
+                width: '56px', height: '56px', borderRadius: '50%',
+                background: '#FEF2F2', display: 'flex', alignItems: 'center',
+                justifyContent: 'center', margin: '0 auto 16px'
+              }}>
+                <span className="material-symbols-outlined" style={{ color: '#E74C3C', fontSize: '28px' }}>delete_forever</span>
+              </div>
+              <h3 style={{ fontSize: '18px', fontWeight: 700, marginBottom: '8px' }}>
+                Delete this incident?
+              </h3>
+              <div style={{ background: '#f8f8f8', borderRadius: '8px', padding: '12px', margin: '12px 0', textAlign: 'left' }}>
+                <p style={{ fontSize: '13px', fontWeight: 600, margin: 0 }}>{incident.title}</p>
+                <p style={{ fontSize: '12px', color: '#888', margin: '4px 0 0' }}>
+                  {formatIncidentId(incident.id)} • {incident.category} • {incident.status}
+                </p>
+              </div>
+              <p style={{ fontSize: '13px', color: '#E74C3C', fontWeight: 500 }}>
+                This cannot be undone.
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button onClick={closeDeleteModal} style={{
+                flex: 1, padding: '12px', borderRadius: '10px',
+                background: '#f5f5f5', border: 'none', cursor: 'pointer',
+                fontSize: '14px', fontWeight: 600
+              }}>Cancel</button>
+              <button onClick={confirmDelete} disabled={deleting} style={{
+                flex: 1, padding: '12px', borderRadius: '10px',
+                background: '#E74C3C', color: '#fff', border: 'none',
+                cursor: 'pointer', fontSize: '14px', fontWeight: 600
+              }}>
+                {deleting ? 'Deleting...' : 'Yes, Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
